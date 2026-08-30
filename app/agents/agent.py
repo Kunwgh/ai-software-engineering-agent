@@ -1,4 +1,7 @@
 import json
+from operator import le
+from app.rag.retriever import Retriever
+from app.rag.context import build_context
 
 from app.database.repository import (
     create_task,
@@ -15,9 +18,13 @@ from app.tools.schemas import TOOL_SCHEMAS
 
 
 class SoftwareEngineeringAgent:
-    def __init__(self):
+    def __init__(
+        self,
+        retriever: Retriever | None = None,
+    ):
         self.llm = GeminiClient()
         self.tool_executor = ToolExecutor()
+        self.retriever = retriever or Retriever()
 
     def _get_gemini_tools(self):
         tools = []
@@ -48,33 +55,29 @@ class SoftwareEngineeringAgent:
         iteration = 1
 
         run_id = create_agent_run(
-        task_id,
-        iteration,
+                task_id,
+            iteration,
         )
 
+        prompt = self._build_task_prompt(task)
+
         response = self.llm.create_interaction(
-            task,
+            prompt,
             self._get_gemini_tools(),
         )
 
         while True:
-            if iteration >= max_iterations:
-                raise RuntimeError(
-                    f"Agent exceeded maximum iterations: {max_iterations}"
-                )
-
-            iteration += 1
-
             function_calls = [
                 step
                 for step in response.steps
                 if step.type == "function_call"
             ]
 
+            # Gemini has finished the task.
             if not function_calls:
                 update_agent_run_status(run_id, "completed")
                 update_task_status(task_id, "completed")
-                
+
                 return response.output_text
 
             function_results = []
@@ -82,9 +85,9 @@ class SoftwareEngineeringAgent:
             for call in function_calls:
                 try:
                     tool_result = self.tool_executor.execute(
-                    call.name,
-                    call.arguments,
-                    )   
+                        call.name,
+                        call.arguments,
+                    )
 
                     # Gemini expects the function result to be
                     # JSON-compatible. Convert Python values to JSON text.
@@ -113,6 +116,18 @@ class SoftwareEngineeringAgent:
                         "result": result,
                     }
                 )
+
+            # We have already used the maximum number of iterations.
+            # Do not ask Gemini for another iteration.
+            if iteration >= max_iterations:
+                update_agent_run_status(run_id, "failed")
+                update_task_status(task_id, "failed")
+
+                raise RuntimeError(
+                    f"Agent exceeded maximum iterations: {max_iterations}"
+                )
+
+            iteration += 1
 
             response = self.llm.continue_interaction(
                 response.id,
@@ -181,3 +196,52 @@ Do not invent information that is not present in the code.
             tool_name,
             arguments,
         )
+
+    def retrieve_context(
+        self,
+        query: str,
+        top_k: int = 5,
+        min_score: float = 0.0,
+    ) -> str:
+        results = self.retriever.retrieve(
+            query,
+            top_k=top_k,
+            min_score=min_score,
+        )
+
+        return build_context(results)
+
+    def _build_task_prompt(
+        self,
+        task: str,
+        top_k: int = 5,
+        min_score: float = 0.0,
+    ) -> str:
+        try:
+            context = self.retrieve_context(
+                task,
+                top_k=top_k,
+                min_score=min_score,
+            )
+        except Exception:
+            context = ""
+
+        if not context:
+            return task
+
+        return f"""
+    You are a software engineering agent.
+
+    Use the following repository context to help answer the task.
+
+    REPOSITORY CONTEXT:
+
+    {context}
+
+    TASK:
+
+    {task}
+
+    Use the repository context when relevant.
+    Do not assume information that is not present in the context.
+    """

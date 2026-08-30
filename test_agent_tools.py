@@ -1,6 +1,20 @@
 from app.agents.agent import SoftwareEngineeringAgent
 import pytest
 
+class FakeRetriever:
+    def retrieve(self, query, top_k=5):
+        return []
+
+
+def test_agent_accepts_retriever():
+    retriever = FakeRetriever()
+
+    agent = SoftwareEngineeringAgent(
+        retriever=retriever,
+    )
+
+    assert agent.retriever is retriever
+
 def test_use_tool():
     agent = SoftwareEngineeringAgent()
 
@@ -69,7 +83,9 @@ def test_run_rejects_negative_max_iterations():
         agent.run("test task", max_iterations=-1)
 
 def test_run_enforces_max_iterations(monkeypatch):
-    agent = SoftwareEngineeringAgent()
+    agent = SoftwareEngineeringAgent(
+        retriever=FakeRetriever(),
+    )
 
     class FakeResponse:
         id = "fake-response-id"
@@ -104,7 +120,9 @@ def test_run_enforces_max_iterations(monkeypatch):
         agent.run("test task", max_iterations=2)
 
 def test_run_recovers_from_tool_failure(monkeypatch):
-    agent = SoftwareEngineeringAgent()
+    agent = SoftwareEngineeringAgent(
+        retriever=FakeRetriever(),
+)
 
     class FakeFunctionCall:
         type = "function_call"
@@ -166,7 +184,9 @@ def test_run_recovers_from_tool_failure(monkeypatch):
     assert "File does not exist" in function_results[0]["result"]
 
 def test_run_handles_multiple_tool_calls(monkeypatch):
-    agent = SoftwareEngineeringAgent()
+    agent = SoftwareEngineeringAgent(
+    retriever=FakeRetriever(),
+    )
 
     class FakeFunctionCall:
         type = "function_call"
@@ -256,7 +276,9 @@ def test_run_handles_multiple_tool_calls(monkeypatch):
     ]
 
 def test_run_sends_tool_results_back_to_gemini(monkeypatch):
-    agent = SoftwareEngineeringAgent()
+    agent = SoftwareEngineeringAgent(
+        retriever=FakeRetriever(),
+    )
 
     class FakeFunctionCall:
         type = "function_call"
@@ -327,3 +349,218 @@ def test_run_sends_tool_results_back_to_gemini(monkeypatch):
             "result": "Contents of test_tools.py",
         }
     ]
+
+def test_agent_retrieves_context():
+    class FakeRetriever:
+        def retrieve(self, query, top_k=5, min_score=0.0):
+            assert query == "Where is the database connection?"
+            assert top_k == 3
+            assert min_score == 0.0
+
+            return [
+                {
+                    "file_path": "app/database.py",
+                    "content": "database connection",
+                    "start_line": 10,
+                    "end_line": 20,
+                    "score": 1.0,
+                }
+            ]
+
+    retriever = FakeRetriever()
+
+    agent = SoftwareEngineeringAgent(
+        retriever=retriever,
+    )
+
+    context = agent.retrieve_context(
+        "Where is the database connection?",
+        top_k=3,
+    )
+
+    assert context == (
+        "--- app/database.py (lines 10-20) ---\n"
+        "database connection"
+    )
+
+def test_build_task_prompt_includes_rag_context():
+    class FakeRetriever:
+        def retrieve(self, query, top_k=5, min_score=0.0):
+            assert query == "Where is the database connection?"
+            assert top_k == 5
+
+            return [
+                {
+                    "file_path": "app/database.py",
+                    "content": "connection = sqlite3.connect(...)",
+                    "start_line": 10,
+                    "end_line": 10,
+                    "score": 1.0,
+                }
+            ]
+
+    agent = SoftwareEngineeringAgent(
+        retriever=FakeRetriever(),
+    )
+
+    prompt = agent._build_task_prompt(
+        "Where is the database connection?"
+    )
+
+    assert "REPOSITORY CONTEXT:" in prompt
+    assert "app/database.py" in prompt
+    assert "connection = sqlite3.connect(...)" in prompt
+    assert "Where is the database connection?" in prompt
+
+def test_build_task_prompt_without_context_returns_task():
+    class FakeRetriever:
+        def retrieve(self, query, top_k=5, min_score=0.0):
+            return []
+
+    agent = SoftwareEngineeringAgent(
+        retriever=FakeRetriever(),
+    )
+
+    task = "Explain this project."
+
+    prompt = agent._build_task_prompt(task)
+
+    assert prompt == task
+
+def test_run_sends_rag_context_to_gemini(monkeypatch):
+    class FakeRetriever:
+        def retrieve(self, query, top_k=5, min_score=0.0):
+            return [
+                {
+                    "file_path": "app/database.py",
+                    "content": "connection = sqlite3.connect('agent.db')",
+                    "start_line": 10,
+                    "end_line": 10,
+                    "score": 1.0,
+                }
+            ]
+
+    agent = SoftwareEngineeringAgent(
+        retriever=FakeRetriever(),
+    )
+
+    class FakeResponse:
+        id = "response-1"
+        steps = []
+        output_text = "The database connection is created in app/database.py."
+
+    captured_calls = []
+
+    def fake_create(**kwargs):
+        captured_calls.append(kwargs)
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        agent.llm.client.interactions,
+        "create",
+        fake_create,
+    )
+
+    result = agent.run(
+        "Where is the database connection created?",
+        max_iterations=2,
+    )
+
+    assert result == (
+        "The database connection is created in app/database.py."
+    )
+
+    assert len(captured_calls) == 1
+
+    prompt = captured_calls[0]["input"]
+
+    assert "REPOSITORY CONTEXT:" in prompt
+    assert "app/database.py" in prompt
+    assert "connection = sqlite3.connect('agent.db')" in prompt
+    assert "Where is the database connection created?" in prompt
+
+def test_build_task_prompt_continues_when_rag_fails():
+    class FailingRetriever:
+        def retrieve(self, query, top_k=5, min_score=0.0):
+            raise RuntimeError("RAG unavailable")
+
+    agent = SoftwareEngineeringAgent(
+        retriever=FailingRetriever(),
+    )
+
+    task = "Explain the database connection."
+
+    prompt = agent._build_task_prompt(task)
+
+    assert prompt == task
+
+def test_build_task_prompt_passes_min_score_to_retriever():
+    class FakeRetriever:
+        def __init__(self):
+            self.received_min_score = None
+
+        def retrieve(self, query, top_k=5, min_score=0.0):
+            self.received_min_score = min_score
+            return []
+
+    retriever = FakeRetriever()
+
+    agent = SoftwareEngineeringAgent(
+        retriever=retriever,
+    )
+
+    task = "Explain the database connection."
+
+    agent._build_task_prompt(
+        task,
+        top_k=3,
+        min_score=0.6,
+    )
+
+    assert retriever.received_min_score == 0.6
+
+def test_run_uses_rag_enriched_prompt():
+    class FakeRetriever:
+        def retrieve(self, query, top_k=5, min_score=0.0):
+            return [
+                {
+                    "file_path": "app/database.py",
+                    "content": "DATABASE_URL = 'sqlite:///agent.db'",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "score": 1.0,
+                }
+            ]
+
+    agent = SoftwareEngineeringAgent(
+        retriever=FakeRetriever(),
+    )
+
+    class FakeResponse:
+        id = "response-1"
+        steps = []
+        output_text = "The database uses SQLite."
+
+    captured_calls = []
+
+    def fake_create(**kwargs):
+        captured_calls.append(kwargs)
+        return FakeResponse()
+
+    agent.llm.client.interactions.create = fake_create
+
+    result = agent.run(
+        "What database does this project use?",
+        max_iterations=1,
+    )
+
+    assert result == "The database uses SQLite."
+
+    assert len(captured_calls) == 1
+
+    prompt = captured_calls[0]["input"]
+
+    assert "REPOSITORY CONTEXT:" in prompt
+    assert "app/database.py" in prompt
+    assert "DATABASE_URL" in prompt
+    assert "What database does this project use?" in prompt

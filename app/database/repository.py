@@ -1,5 +1,5 @@
 from app.database.database import get_connection
-
+import json
 
 def create_task(task: str) -> int:
     connection = get_connection()
@@ -190,3 +190,71 @@ def get_tool_calls(run_id: int):
     connection.close()
 
     return tool_calls
+
+def create_code_chunk(
+    file_path: str,
+    chunk_index: int,
+    content: str,
+    start_line: int,
+    end_line: int,
+    embedding: list[float],
+) -> int:
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO code_chunks (
+            file_path,
+            chunk_index,
+            content,
+            start_line,
+            end_line,
+            embedding
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            file_path,
+            chunk_index,
+            content,
+            start_line,
+            end_line,
+            json.dumps(embedding),
+        ),
+    )
+
+    chunk_id = cursor.lastrowid
+
+    connection.commit()
+    connection.close()
+
+    return chunk_id
+
+def get_code_chunks():
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            id,
+            file_path,
+            chunk_index,
+            content,
+            start_line,
+            end_line,
+            embedding,
+            created_at
+        FROM code_chunks
+        ORDER BY id
+        """
+    )
+
+    chunks = cursor.fetchall()
+
+    connection.close()
+
+    return chunks
