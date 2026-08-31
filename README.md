@@ -61,8 +61,7 @@ SoftwareEngineeringAgent
 | Embeddings         | Sentence Transformers (`all-MiniLM-L6-v2`) |
 | IDE                | VS Code                                    |
 | Containers         | Docker                                     |
-| MCP                | Planned for later                          |
-
+| MCP                | Python MCP server                          |
 ## RAG Pipeline
 
 ```text
@@ -306,3 +305,4 @@ Application Test        ✅
 Docker                  ✅
 Docker End-to-End Test   ✅
 Pytest                  ✅ 62/62
+MCP                     ✅
