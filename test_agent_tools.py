@@ -564,3 +564,27 @@ def test_run_uses_rag_enriched_prompt():
     assert "app/database.py" in prompt
     assert "DATABASE_URL" in prompt
     assert "What database does this project use?" in prompt
+
+def test_run_falls_back_to_ollama_when_gemini_fails(
+    monkeypatch,
+):
+    class FakeGemini:
+        def create_interaction(self, prompt, tools):
+            raise RuntimeError("Gemini quota exceeded")
+
+    class FakeOllama:
+        def generate(self, prompt):
+            assert "Test task" in prompt
+            return "Ollama fallback response"
+
+    agent = SoftwareEngineeringAgent()
+
+    agent.llm = FakeGemini()
+    agent.fallback_llm = FakeOllama()
+
+    result = agent.run(
+        "Test task",
+        max_iterations=1,
+    )
+
+    assert result == "Ollama fallback response"

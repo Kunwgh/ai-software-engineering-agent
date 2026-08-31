@@ -1,22 +1,28 @@
-from ollama import chat
+from app.agents.agent import SoftwareEngineeringAgent
 
-messages = []
 
-while True:
-    user_input = input("You: ")
+def main():
+    agent = SoftwareEngineeringAgent()
 
-    if user_input.lower() == "exit":
-        print("Goodbye!")
-        break
-    
-    messages.append({"role": "user", "content": user_input})
+    print("AI Software Engineering Agent")
+    print("Type 'exit' to quit.")
 
-    response = chat(model="qwen3:8b", messages=messages)
+    while True:
+        user_input = input("You: ").strip()
 
-    #Get the AI's reply
-    ai_response = response["message"]["content"]
+        if user_input.lower() == "exit":
+            print("Goodbye!")
+            break
 
-    print("Assistant:", ai_response)
+        if not user_input:
+            continue
 
-    #Store the AI's reply
-    messages.append({"role": "assistant", "content": ai_response})
+        try:
+            response = agent.run(user_input)
+            print("Assistant:", response)
+        except Exception as e:
+            print(f"Error: {e}")
+
+
+if __name__ == "__main__":
+    main()

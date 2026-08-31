@@ -1,5 +1,7 @@
 import json
 from operator import le
+
+from typer import prompt
 from app.rag.retriever import Retriever
 from app.rag.context import build_context
 
@@ -12,6 +14,7 @@ from app.database.repository import (
 )
 
 from app.llm.gemini_client import GeminiClient
+from app.llm.ollama_client import OllamaClient
 from app.tools.repository import scan_repository, read_file
 from app.tools.executor import ToolExecutor
 from app.tools.schemas import TOOL_SCHEMAS
@@ -23,6 +26,7 @@ class SoftwareEngineeringAgent:
         retriever: Retriever | None = None,
     ):
         self.llm = GeminiClient()
+        self.fallback_llm = OllamaClient()
         self.tool_executor = ToolExecutor()
         self.retriever = retriever or Retriever()
 
@@ -61,10 +65,13 @@ class SoftwareEngineeringAgent:
 
         prompt = self._build_task_prompt(task)
 
-        response = self.llm.create_interaction(
-            prompt,
-            self._get_gemini_tools(),
-        )
+        try:
+            response = self.llm.create_interaction(
+                prompt,
+                self._get_gemini_tools(),
+            )
+        except Exception:
+            return self.fallback_llm.generate(prompt)
 
         while True:
             function_calls = [
