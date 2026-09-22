@@ -1,4 +1,10 @@
-google-genai==2.18.1
+google-genai==2.23.0
 python-dotenv==1.2.2
 sentence-transformers==6.0.0
 ollama==0.6.2
+langchain==1.4.0
+langchain-core==1.6.3
+langchain-google-genai==4.4.0
+langgraph==1.2.11
+langsmith==0.12.4
+langchain-protocol==0.0.19

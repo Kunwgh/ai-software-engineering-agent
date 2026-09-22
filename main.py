@@ -1,7 +1,10 @@
 from app.agents.agent import SoftwareEngineeringAgent
+from app.database.schema import initialize_database
 
 
 def main():
+    initialize_database()
+
     agent = SoftwareEngineeringAgent()
 
     print("AI Software Engineering Agent")
